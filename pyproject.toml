@@ -1,0 +1,31 @@
+[project]
+name = "logging-tests"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.ruff]
+line-length = 120
+unsafe-fixes = true
+
+#lint.preview = true
+lint.select = [
+    "ALL"
+]
+lint.ignore = [
+    "COM812", # Missing trailing commas
+    "CPY001", # Check for copyright notice in file
+    "DJ", # All Django checks
+    "D203", # The docstrings for class definitions should have a preceding blank line
+    "D212", # The docstrings' summary line should be positioned on the same line as the opening quotes
+    "D400", # The docstrings' first line should end with a period
+    "D401", # The docstrings' first line should be in imperative mood
+    "D413", # The docstrings' last line should be a blank line
+    "D415", # The docstrings' first line should end with a period, question mark, or exclamation point
+    "FIX002", # Checks for to do comments
+    "T201", # No print statements
+    "TD002", # The to do isn't associated with an author
+    "TD003", # The to do isn't associated with an issue or ticket
+]
