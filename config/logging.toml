@@ -1,0 +1,13 @@
+[logging]
+level = "INFO"
+format = "json"
+
+[logging.file]
+path = "logs/app.log"
+max_size = 10485760  # 10MB in bytes
+backup_count = 5
+encoding = "utf-8"
+
+[logging.console]
+colors = true
+rich_tracebacks = true
