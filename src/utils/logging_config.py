@@ -1,8 +1,27 @@
-"""
-Structured logging configuration with file and console output support.
+"""Structured logging configuration with file and console output support.
 
 This module provides a flexible logging configuration system that supports both file and console outputs with
 structured logging via structlog and standard library logging.
+
+Examples:
+    configure_logging()  # Use default configuration
+    logger = get_logger(__name__)
+    logger.info("Application started", version="1.0.0")
+
+Configuration:
+    The logging configuration can be specified in a TOML file with the following structure:
+    [logging]
+    level = "INFO"
+
+    [logging.file]
+    path = "logs/app.log"
+    max_size = 10485760 # 10MB
+    backup_count = 5
+    encoding = "utf-8"
+
+    [logging.console]
+    colors = true
+    rich_tracebacks = true
 """
 
 import logging
@@ -11,10 +30,13 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Final, Literal, get_args
 
 import structlog
 from structlog.types import Processor
+
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+VALID_LOG_LEVELS: Final[frozenset[str]] = frozenset(get_args(LogLevel))
 
 
 @dataclass(frozen=True)
@@ -35,14 +57,30 @@ class ConsoleHandlerConfig:
     rich_tracebacks: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LogConfig:
-    """Complete logging configuration settings."""
+    """Complete logging configuration settings.
 
-    level: str
-    format: str
+    Coordinates both file and console logging settings while enforcing validation rules.
+    Supports creation from TOML configuration files and provides sensible defaults when needed.
+    """
+
+    level: LogLevel
     file: FileHandlerConfig
     console: ConsoleHandlerConfig
+
+    def __post_init__(self) -> None:
+        """Validate configuration values after initialization.
+
+        Raises:
+            ValueError: If the logging level is invalid
+        """
+        if self.level.upper() not in VALID_LOG_LEVELS:
+            msg = (
+                f"Invalid logging level: {self.level!r}. "
+                f"Must be one of: {', '.join(sorted(VALID_LOG_LEVELS))}"
+            )
+            raise ValueError(msg)
 
     @classmethod
     def from_toml(cls, config_path: Path) -> "LogConfig":
@@ -79,7 +117,6 @@ class LogConfig:
 
             return cls(
                 level=logging_config["level"],
-                format=logging_config["format"],
                 file=file_config,
                 console=console_config
             )
@@ -96,7 +133,6 @@ class LogConfig:
         """
         return cls(
             level="INFO",
-            format="json",
             file=FileHandlerConfig(
                 path=root_dir / "logs" / "app.log",
                 max_size=10 * 1024 * 1024,  # 10MB
@@ -112,7 +148,7 @@ class LogConfig:
 class LoggerFactory:
     """Factory class for creating and configuring loggers."""
 
-    def __init__(self, config: LogConfig):
+    def __init__(self, config: LogConfig) -> None:
         """Initialize the logger factory with configuration.
 
         Args:
@@ -122,7 +158,7 @@ class LoggerFactory:
         self._shared_processors = self.create_shared_processors()
 
     @staticmethod
-    def create_shared_processors() -> List[Processor]:
+    def create_shared_processors() -> list[Processor]:
         """Create the list of shared structlog processors.
 
         Returns:
@@ -197,7 +233,7 @@ def get_project_root() -> Path:
     return Path(__file__).parent.parent.parent
 
 
-def configure_logging(config_path: Optional[Path] = None) -> None:
+def configure_logging(config_path: Path | None = None) -> None:
     """Configure structlog and standard library logging.
 
     Args:
@@ -250,7 +286,7 @@ def configure_logging(config_path: Optional[Path] = None) -> None:
     logger.info("Logging configured", config_path=str(config_path))
 
 
-def _configure_existing_loggers(level: str, handlers: List[logging.Handler]) -> None:
+def _configure_existing_loggers(level: str, handlers: list[logging.Handler]) -> None:
     """Configure all existing loggers to use the specified handlers.
 
     Args:
@@ -267,7 +303,7 @@ def _configure_existing_loggers(level: str, handlers: List[logging.Handler]) -> 
         logger.setLevel(level)
 
 
-def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
+def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """Get a configured structlog logger instance.
 
     Args:

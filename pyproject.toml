@@ -15,7 +15,7 @@ dependencies = [
 line-length = 120
 unsafe-fixes = true
 
-#lint.preview = true
+lint.preview = true
 lint.select = [
     "ALL"
 ]
@@ -24,7 +24,8 @@ lint.ignore = [
     "CPY001", # Check for copyright notice in file
     "DJ", # All Django checks
     "D203", # The docstrings for class definitions should have a preceding blank line
-    "D212", # The docstrings' summary line should be positioned on the same line as the opening quotes
+    # "D212", # The docstrings' summary line should be positioned on the same line as the opening quotes
+    "D213", # The dosctrings' summary line for a multi-line docstring should start at the second line
     "D400", # The docstrings' first line should end with a period
     "D401", # The docstrings' first line should be in imperative mood
     "D413", # The docstrings' last line should be a blank line
