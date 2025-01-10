@@ -11,5 +11,4 @@ wheels/
 
 .git
 .idea
-
-logs/*
+logs/
