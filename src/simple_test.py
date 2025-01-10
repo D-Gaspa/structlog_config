@@ -1,4 +1,5 @@
 """Example usage of the custom logging configuration."""
+
 from pathlib import Path
 
 import structlog

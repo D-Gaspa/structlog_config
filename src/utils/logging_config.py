@@ -1,4 +1,10 @@
-"""Logging configuration module."""
+"""
+Logging configuration module.
+
+This module provides a custom logging configuration using structlog and standard library logging
+with a TOML configuration file for settings.
+The configuration file should be placed in the 'config' directory of the project in the root directory.
+"""
 
 import logging
 import logging.handlers
@@ -81,10 +87,9 @@ def configure_logging(config_path: Path | None = None) -> None:
             console_rich_tracebacks=True
         )
 
-    # Ensure the logs directory exists
     config.file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    timestamper = structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S")
+    timestamper = structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False)
 
     shared_processors = [
         structlog.contextvars.merge_contextvars,
@@ -137,6 +142,18 @@ def configure_logging(config_path: Path | None = None) -> None:
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
     root_logger.setLevel(config.level)
+
+    # Redirect all other loggers to use the root logger's handlers
+    for logger_name, logger in logging.Logger.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger) and logger_name != "root":
+            logger.handlers.clear()
+            logger.addHandler(console_handler)
+            logger.addHandler(file_handler)
+            logger.propagate = False
+            logger.setLevel(config.level)
+
+    logger = get_logger(__name__)
+    logger.info("Logging configured", config_path=config_path)
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
