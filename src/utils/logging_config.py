@@ -39,9 +39,16 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 VALID_LOG_LEVELS: Final[frozenset[str]] = frozenset(get_args(LogLevel))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FileHandlerConfig:
-    """Configuration for file-based logging output."""
+    """Configuration for file-based logging output.
+
+    Attributes:
+        path:           Path to the log file.
+        max_size:       Maximum size of the log file in bytes before rotating.
+        backup_count:   Number of backup log files to keep before overwriting.
+        encoding:       Encoding for the log file (default: "utf-8").
+    """
 
     path: Path
     max_size: int
@@ -49,9 +56,14 @@ class FileHandlerConfig:
     encoding: str = "utf-8"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ConsoleHandlerConfig:
-    """Configuration for console-based logging output."""
+    """Configuration for console-based logging output.
+
+    Attributes:
+        colors:             Enable colored output for the console (requires 'colorama' library).
+        rich_tracebacks:    Enable rich tracebacks for exceptions (requires 'rich' library).
+    """
 
     colors: bool
     rich_tracebacks: bool
@@ -63,6 +75,11 @@ class LogConfig:
 
     Coordinates both file and console logging settings while enforcing validation rules.
     Supports creation from TOML configuration files and provides sensible defaults when needed.
+
+    Attributes:
+        level:      Logging level to use (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+        file:       FileHandlerConfig instance for file-based logging settings.
+        console:    ConsoleHandlerConfig instance for console-based logging settings.
     """
 
     level: LogLevel
@@ -73,13 +90,21 @@ class LogConfig:
         """Validate configuration values after initialization.
 
         Raises:
-            ValueError: If the logging level is invalid
+            ValueError: If the logging level is invalid or if file settings are invalid
         """
-        if self.level.upper() not in VALID_LOG_LEVELS:
+        if self.level not in VALID_LOG_LEVELS:
             msg = (
                 f"Invalid logging level: {self.level!r}. "
                 f"Must be one of: {', '.join(sorted(VALID_LOG_LEVELS))}"
             )
+            raise ValueError(msg)
+
+        if self.file.max_size <= 0:
+            msg = "max_size must be a positive integer (bytes)"
+            raise ValueError(msg)
+
+        if self.file.backup_count < 0:
+            msg = "backup_count must be a non-negative integer"
             raise ValueError(msg)
 
     @classmethod
@@ -93,37 +118,57 @@ class LogConfig:
             LogConfig instance with the parsed configuration
 
         Raises:
-            FileNotFoundError: If the configuration file doesn't exist
+            FileNotFoundError:  If the configuration file doesn't exist
+            TOMLDecodeError:    If the TOML file is malformed
+            ValueError:         If required configuration keys are missing or if values are invalid
         """
-        if not config_path.exists():
-            msg = f"Configuration file not found: {config_path}"
-            raise FileNotFoundError(msg)
+        try:
+            with config_path.open("rb") as f:
+                config_data = tomllib.load(f)
 
-        with config_path.open("rb") as f:
-            config = tomllib.load(f)
-            logging_config = config["logging"]
+        except FileNotFoundError as e:
+            msg = f"Configuration file not found: {config_path}"
+            raise FileNotFoundError(msg) from e
+
+        except tomllib.TOMLDecodeError as e:
+            msg = f"Failed to parse TOML file {config_path}"
+            raise tomllib.TOMLDecodeError(msg) from e
+
+        try:
+            logging_config = config_data["logging"]
 
             file_config = FileHandlerConfig(
                 path=Path(logging_config["file"]["path"]),
-                max_size=logging_config["file"]["max_size"],
-                backup_count=logging_config["file"]["backup_count"],
-                encoding=logging_config["file"]["encoding"],
+                max_size=int(logging_config["file"]["max_size"]),
+                backup_count=int(logging_config["file"]["backup_count"]),
+                encoding=logging_config["file"].get("encoding", "utf-8"),
             )
 
             console_config = ConsoleHandlerConfig(
-                colors=logging_config["console"]["colors"],
-                rich_tracebacks=logging_config["console"]["rich_tracebacks"]
+                colors=bool(logging_config["console"]["colors"]),
+                rich_tracebacks=bool(logging_config["console"]["rich_tracebacks"])
             )
 
             return cls(
-                level=logging_config["level"],
+                level=logging_config["level"].upper(),
                 file=file_config,
                 console=console_config
             )
 
+        except KeyError as e:
+            msg = f"Missing required configuration key in configuration file: {e.args[0]}"
+            raise ValueError(msg) from e
+
+        except (TypeError, ValueError) as e:
+            msg = f"Invalid value in configuration file: {e!s}"
+            raise ValueError(msg) from e
+
     @classmethod
     def create_default(cls, root_dir: Path) -> "LogConfig":
         """Create a default LogConfig instance.
+
+        The default configuration uses INFO level logging with a rotating file handler of 10MB and 5 backups.
+        There is also a console handler with colored output and rich tracebacks.
 
         Args:
             root_dir: Project root directory for relative path resolution
@@ -146,7 +191,15 @@ class LogConfig:
 
 
 class LoggerFactory:
-    """Factory class for creating and configuring loggers."""
+    """Factory class for creating and configuring loggers.
+
+    This class is responsible for creating and configuring the console and file log handlers
+    with the shared structlog processors.
+
+    Attributes:
+        config:             LogConfig instance containing logger settings
+        _shared_processors: List of shared structlog processors for both console and file output
+    """
 
     def __init__(self, config: LogConfig) -> None:
         """Initialize the logger factory with configuration.
@@ -247,9 +300,9 @@ def configure_logging(config_path: Path | None = None) -> None:
 
     try:
         config = LogConfig.from_toml(config_path)
+
     except FileNotFoundError as e:
-        print(f"Error loading logging configuration: {e}. Using defaults.",
-              file=sys.stderr)
+        print(f"Error loading logging configuration: {e}. Using defaults.", file=sys.stderr)
         config = LogConfig.create_default(root_dir)
 
     config.file.path.parent.mkdir(parents=True, exist_ok=True)
@@ -290,8 +343,8 @@ def _configure_existing_loggers(level: str, handlers: list[logging.Handler]) -> 
     """Configure all existing loggers to use the specified handlers.
 
     Args:
-        level: Logging level to set
-        handlers: List of handlers to add to each logger
+        level:      Logging level to set
+        handlers:   List of handlers to add to each logger
     """
     for logger_name, logger in logging.Logger.manager.loggerDict.items():
         if not isinstance(logger, logging.Logger) or logger_name == "root":
