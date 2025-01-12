@@ -4,7 +4,7 @@ from pathlib import Path
 
 import structlog
 
-from utils.logging_config import configure_logging, get_logger
+from structlog_config import configure_logging, get_logger
 
 
 def main() -> None:

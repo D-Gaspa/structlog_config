@@ -11,4 +11,5 @@ wheels/
 
 .git
 .idea
+.ruff_cache
 logs/
