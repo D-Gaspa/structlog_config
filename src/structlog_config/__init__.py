@@ -50,10 +50,7 @@ Notes:
     - All timestamps are in local time
 """
 
-from importlib.metadata import version
-
 from .config import LogConfig
 from .factory import configure_logging, get_logger
 
-__version__ = version("structlog_config")
 __all__ = ["configure_logging", "get_logger", "LogConfig"]

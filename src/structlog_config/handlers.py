@@ -7,6 +7,7 @@ respective formatting and configuration options.
 
 import logging
 import logging.handlers
+import os
 import sys
 
 import structlog
@@ -35,7 +36,10 @@ def create_shared_processors() -> list[Processor]:
     ]
 
 
-def create_console_handler(config: ConsoleHandlerConfig, shared_processors: list[Processor]) -> logging.Handler:
+def create_console_handler(
+        config: ConsoleHandlerConfig,
+        shared_processors: list[Processor]
+) -> logging.Handler:
     """Create and configure a console logging handler.
 
     Creates a StreamHandler with structlog formatting that outputs to stdout.
@@ -54,7 +58,10 @@ def create_console_handler(config: ConsoleHandlerConfig, shared_processors: list
     return handler
 
 
-def create_file_handler(config: FileHandlerConfig, shared_processors: list[Processor]) -> logging.Handler:
+def create_file_handler(
+        config: FileHandlerConfig,
+        shared_processors: list[Processor]
+) -> logging.Handler:
     """Create and configure a file logging handler.
 
     Creates a RotatingFileHandler with structlog JSON formatting. Handles log
@@ -66,12 +73,34 @@ def create_file_handler(config: FileHandlerConfig, shared_processors: list[Proce
 
     Returns:
         Configured RotatingFileHandler instance
+
+    Raises:
+        OSError:    If there are permission or path issues
+        ValueError: If the configuration is invalid
     """
-    config.path.parent.mkdir(parents=True, exist_ok=True)
+    if not config.enabled:
+        msg = "Attempted to create file handler with disabled configuration"
+        raise ValueError(msg)
+
+    path = config.path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        if path.exists() and not os.access(path, os.W_OK):
+            msg = f"Log file is not writable: {path}"
+            raise ValueError(msg)
+
+        if path.parent.exists() and not os.access(path.parent, os.W_OK):
+            msg = f"Log directory is not writable: {path.parent}"
+            raise ValueError(msg)
+
+    except OSError as e:
+        msg = f"Failed to setup log file at {path}: {e}"
+        raise OSError(msg) from e
 
     formatter = _create_file_formatter(shared_processors)
     handler = logging.handlers.RotatingFileHandler(
-        filename=config.path,
+        filename=path,
         maxBytes=config.max_size,
         backupCount=config.backup_count,
         encoding=config.encoding,
@@ -109,7 +138,9 @@ def _create_console_formatter(
     )
 
 
-def _create_file_formatter(shared_processors: list[Processor]) -> structlog.stdlib.ProcessorFormatter:
+def _create_file_formatter(
+        shared_processors: list[Processor]
+) -> structlog.stdlib.ProcessorFormatter:
     """Create a formatter for file output.
 
     Args:

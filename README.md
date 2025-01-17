@@ -17,13 +17,13 @@ This package provides a clean, type-safe interface for setting up logging with b
 Install directly using `uv`:
 
 ```bash
-uv pip install git+https://github.com/d-gaspa/structlog_config.git
+uv add git+https://github.com/d-gaspa/structlog_config
 ```
 
 or with `pip`:
 
 ```bash
-pip install git+https://github.com/d-gaspa/structlog_config.git
+pip install git+https://github.com/d-gaspa/structlog_config
 ```
 
 ## Quick Start
