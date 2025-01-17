@@ -5,8 +5,10 @@ structlog and the Python standard library logging. It supports both file and con
 outputs with features like log rotation, colored console output, and rich tracebacks.
 
 Key Features:
-    - Rotating file output with configurable size and backup count
-    - Colored console output with rich tracebacks
+    - Thread-safe configuration with single-configuration enforcement
+    - Console-only fallback when logging is accessed before configuration
+    - Optional rotating file output with configurable size and backup count
+    - Colored console output with rich tracebacks (enabled by default)
     - TOML-based configuration with sensible defaults
     - Structured logging with JSON formatting for file output
     - Exception information with full tracebacks
@@ -15,17 +17,28 @@ Key Features:
 Basic Usage:
     ```python
     from structlog_config import configure_logging, get_logger
-    configure_logging()  # Use default configuration
+
+    # Console-only logging with defaults (INFO level, colored output)
     logger = get_logger(__name__)
-    logger.info("Application started", version="1.0.0")
+    logger.info("Using default console-only logging")
+
+    # With file output using configuration file
+    configure_logging("config/logging.toml").with_file().build()
+    logger = get_logger(__name__)
+    logger.info("Logging configured with file output")
+
+    # Custom file path (it creates directory if needed)
+    configure_logging().with_file("logs/custom.log").build()
+    logger = get_logger(__name__)
+    logger.info("Logging to custom file path")
     ```
 
 Configuration:
-    The logging configuration can be specified in a TOML file with the following structure (showing defaults):
+    The logging configuration can be specified in a TOML file with the following structure:
 
     ```toml
     [logging]
-    level = "INFO"
+    level = "INFO"  # (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
     [logging.file]
     path = "logs/app.log"
@@ -38,16 +51,41 @@ Configuration:
     rich_tracebacks = true
     ```
 
-    The configuration file path can be provided to configure_logging():
+    All sections and fields are optional with sensible defaults.
+    File logging must be explicitly enabled using `.with_file()`.
+
+Structured Logging:
+    Add context to your logs with structured data:
+
     ```python
-    configure_logging(Path("config/logging.toml"))
+    from structlog_config import get_logger
+
+    logger = get_logger(__name__)
+
+    # Add persistent context
+    logger = logger.bind(user_id="123", service="example")
+
+    # Log with additional context
+    logger.info(
+        "User action completed",
+        action="purchase",
+        item_id="456",
+        amount=29.99
+    )
+
+    # Thread/async-safe context
+    with structlog.contextvars.bound_contextvars(request_id="abc-123"):
+        logger.info("Processing request")
     ```
 
-Notes:
+Implementation Notes:
     - Log files are automatically rotated when they reach the configured size
     - Console output includes colors by default (requires 'colorama')
     - Rich tracebacks are enabled by default (requires 'rich')
     - All timestamps are in local time
+    - File logging requires write permissions for the target directory
+    - Configuration is thread-safe and can only be fully configured once
+    - Early logging access before configuration uses console-only output
 """
 
 from .config import LogConfig

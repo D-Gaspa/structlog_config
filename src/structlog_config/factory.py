@@ -1,41 +1,65 @@
 """Factory module for configuring and creating structured loggers.
 
-This module provides the main interface for setting up structured logging with both
-file and console outputs.
+This module provides the main interface for setting up structured logging with both file and console outputs.
 It manages the global logging state and provides a fluent interface for configuration.
+
+The module enforces a single-configuration pattern where logging can only be fully configured once.
+However, if logging is accessed before configuration, it provides a console-only fallback.
 """
 
 import logging
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional
+from typing import Final
 
 import structlog
 from structlog.stdlib import BoundLogger
 
-from .config import LogConfig
+from .config import FileHandlerConfig, LogConfig
 from .handlers import create_console_handler, create_file_handler, create_shared_processors
 
 
 @dataclass(frozen=True)
 class LoggingConfig:
-    """Internal configuration state holder."""
+    """Internal configuration state holder.
+
+    This class maintains the complete logging configuration state including both
+    the base configuration and file-specific settings.
+
+    Attributes:
+        config:         Base logging configuration from TOML or defaults
+        file_path:      Optional custom path for file logging
+        is_configured:  Flag indicating if logging has been fully configured
+    """
+
     config: LogConfig
-    file_path: Optional[Path] = None
+    file_path: Path | None = None
     is_configured: bool = False
 
 
 class ConfigurationState:
-    """Manages the global logging configuration state."""
+    """Manages the global logging configuration state.
+
+    This class provides thread-safe access to the global logging configuration
+    and ensures that logging can only be fully configured once.
+
+    Attributes:
+        _state: Current logging configuration state
+        _lock:  Threading lock for thread-safe state modifications
+    """
 
     def __init__(self) -> None:
         """Initialize the configuration state."""
         self._state: LoggingConfig | None = None
-        self._lock = threading.Lock()
+        self._lock: Final = threading.Lock()
 
     def is_configured(self) -> bool:
-        """Check if logging has been fully configured."""
+        """Check if logging has been fully configured.
+
+        Returns:
+            True if logging has been configured, False otherwise
+        """
         return self._state is not None and self._state.is_configured
 
     def get_config(self) -> LoggingConfig:
@@ -59,7 +83,7 @@ class ConfigurationState:
         """Set the configuration state.
 
         Args:
-            config: New logging configuration
+            config: New logging configuration to apply
 
         Raises:
             RuntimeError: If logging has already been configured
@@ -75,11 +99,19 @@ class ConfigurationState:
 
 
 # Global configuration state
-_config_state = ConfigurationState()
+_config_state: Final = ConfigurationState()
 
 
 class LoggingBuilder:
-    """Builder for logging configuration."""
+    """Builder for logging configuration.
+
+    Provides a fluent interface for configuring logging settings, including
+    optional file logging with custom paths.
+
+    Attributes:
+        _config:    Base logging configuration from TOML or defaults
+        _file_path: Optional custom path for file logging output
+    """
 
     def __init__(self, config: LogConfig) -> None:
         """Initialize the logging builder.
@@ -87,31 +119,32 @@ class LoggingBuilder:
         Args:
             config: Base logging configuration
         """
-        self._config = config
-        self._file_path: Optional[Path] = None
+        self._config: Final = config
+        self._file_path: Path | None = None
 
-    def with_file(self, path: Optional[str | Path] = None) -> "LoggingBuilder":
+    def with_file(self, path: str | Path | None = None) -> "LoggingBuilder":
         """Add file logging with an optional custom path.
 
+        If a path is provided, it can be either relative or absolute.
+        Relative paths are resolved from the current working directory.
+        If no path is provided, the path from the configuration file or default path is used.
+
         Args:
-            path: Optional custom log file path.
-                    If not provided, it uses the path from config file or default path.
+            path: Optional custom log file path
 
         Returns:
             Self for method chaining
         """
         if path is not None:
             self._file_path = Path(path)
-        else:
-            self._file_path = Path()  # Empty path indicates use config/default
 
         return self
 
     def build(self) -> None:
         """Build and apply the logging configuration.
 
-        Raises:
-            RuntimeError: If logging has already been configured
+        This method finalizes the configuration and sets up the logging system.
+        It can only be called once per application lifecycle.
         """
         config = LoggingConfig(
             config=self._config,
@@ -123,21 +156,18 @@ class LoggingBuilder:
         _configure_logging(config)
 
 
-def configure_logging(config_path: Optional[str | Path] = None) -> LoggingBuilder:
+def configure_logging(config_path: str | Path | None = None) -> LoggingBuilder:
     """Configure structlog and standard library logging.
 
-    This function sets up the logging system with the specified configuration.
-    If no configuration path is provided, it will create a default configuration.
+    This function initiates the logging setup process.
+    If no configuration path is provided, it creates a default configuration.
+    The returned builder allows further customization before finalizing the configuration.
 
     Args:
         config_path: Optional path to a TOML config file
 
     Returns:
         LoggingBuilder instance for method chaining
-
-    Raises:
-        ValueError:     If the config path is invalid
-        RuntimeError:   If logging has already been configured
     """
     if config_path is not None:
         config = LogConfig.from_toml(Path(config_path))
@@ -147,11 +177,11 @@ def configure_logging(config_path: Optional[str | Path] = None) -> LoggingBuilde
     return LoggingBuilder(config)
 
 
-def get_logger(name: Optional[str] = None) -> BoundLogger:
+def get_logger(name: str | None = None) -> BoundLogger:
     """Get a configured structlog logger instance.
 
     Creates or retrieves a structured logger with the specified name.
-    If logging hasn't been configured yet, returns a console-only logger.
+    If logging hasn't been configured yet, returns a console-only logger and issues a warning.
 
     Args:
         name: Optional logger name (typically __name__)
@@ -172,7 +202,11 @@ def get_logger(name: Optional[str] = None) -> BoundLogger:
 
 
 def _configure_console_only() -> None:
-    """Configure basic console-only logging."""
+    """Configure basic console-only logging.
+
+    Sets up a minimal logging configuration that only outputs to the console.
+    This is used as a fallback when logging is accessed before configuration.
+    """
     config = LogConfig.create_default(Path.cwd() / "logs")
     shared_processors = create_shared_processors()
     console_handler = create_console_handler(config.console, shared_processors)
@@ -186,28 +220,17 @@ def _configure_console_only() -> None:
 def _configure_logging(config: LoggingConfig) -> None:
     """Configure the logging system with the specified configuration.
 
+    Sets up both structlog and standard library logging with the provided
+    configuration, including console and optional file output.
+
     Args:
-        config: Logging configuration to apply
+        config: Complete logging configuration to apply
     """
     shared_processors = create_shared_processors()
     handlers = [create_console_handler(config.config.console, shared_processors)]
 
     if config.file_path is not None:
-        # File logging is enabled
-        file_config = config.config.file
-        if not config.file_path.is_absolute():
-            # Use the path from config or default
-            file_config = replace(
-                file_config,
-                path=config.config.file.path
-            )
-        else:
-            # Use the explicit path from builder
-            file_config = replace(
-                file_config,
-                path=config.file_path
-            )
-
+        file_config = _create_file_config(config)
         handlers.append(create_file_handler(file_config, shared_processors))
 
     structlog.configure(
@@ -225,15 +248,35 @@ def _configure_logging(config: LoggingConfig) -> None:
     )
 
 
+def _create_file_config(config: LoggingConfig) -> FileHandlerConfig:
+    """Create the file handler configuration.
+
+    Determines the appropriate file path based on the configuration and
+    builder settings.
+
+    Args:
+        config: Complete logging configuration
+
+    Returns:
+        File handler configuration with the resolved path and enabled state
+    """
+    file_config = config.config.file
+    # Check if the custom file path is not empty
+    if config.file_path:
+        return replace(file_config, path=config.file_path, enabled=True)
+
+    return file_config
+
+
 def _configure_logging_system(level: str, handlers: list[logging.Handler]) -> None:
     """Configure the logging system with the specified handlers.
 
-    Sets up both the root logger and any existing loggers with the provided
-    configuration.
+    Sets up both the root logger and any existing loggers with the provided configuration.
+    This ensures consistent handling across all loggers.
 
     Args:
-        level: Logging level to set
-        handlers: List of handlers to add to loggers
+        level:      Logging level to set
+        handlers:   List of handlers to add to loggers
     """
     # Configure root logger
     root_logger = logging.getLogger()
