@@ -6,10 +6,11 @@ for both file and console logging outputs.
 """
 
 import os
-import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final, Literal, get_args
+
+import tomllib
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 VALID_LOG_LEVELS: Final[frozenset[str]] = frozenset(get_args(LogLevel))

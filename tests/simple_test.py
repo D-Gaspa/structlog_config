@@ -33,7 +33,7 @@ def demonstrate_logging_features(logger: structlog.stdlib.BoundLogger) -> None:
 def main() -> None:
     """Main entry point demonstrating different configuration options."""
     # 1. Configure with the relative path from the config file
-    print("\n=== Using Config File ===")
+    print("=== Using Config File ===")
     config_path = Path(__file__).parent.parent / "config" / "logging.toml"
     configure_logging(config_path).with_file().build()
 
