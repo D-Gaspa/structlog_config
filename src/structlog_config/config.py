@@ -8,12 +8,11 @@ for both file and console logging outputs.
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Final, Literal, get_args
 
 import tomllib
 
-LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-VALID_LOG_LEVELS: Final[frozenset[str]] = frozenset(get_args(LogLevel))
+from .log_levels import VALID_LOG_LEVELS, LogLevel
+from .pattern_config import PatternLevelConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,18 +115,20 @@ class ConsoleHandlerConfig:
 class LogConfig:
     """Complete logging configuration settings.
 
-    This class coordinates both file and console logging settings while enforcing validation rules.
-    It supports creation from TOML configuration files and provides sensible defaults when needed.
+    This class coordinates logging settings while enforcing validation rules.
+    It supports the creation of a TOML configuration file and provides sensible defaults.
 
     Attributes:
-        level:      Logging level to use (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        file:       FileHandlerConfig instance for file-based logging settings
-        console:    ConsoleHandlerConfig instance for console-based logging settings
+        level:          Logging level to use (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        file:           FileHandlerConfig instance for file-based logging settings
+        console:        ConsoleHandlerConfig instance for console-based logging settings
+        pattern_levels: PatternLevelConfig for fine-grained logger level control
     """
 
     level: LogLevel
     file: FileHandlerConfig
     console: ConsoleHandlerConfig
+    pattern_levels: PatternLevelConfig
 
     def __post_init__(self) -> None:
         """Validate configuration values after initialization.
@@ -209,7 +210,8 @@ class LogConfig:
         return cls(
             level=logging_config["level"].upper(),
             file=cls._create_file_config(logging_config.get("file", {})),
-            console=cls._create_console_config(logging_config.get("console", {}))
+            console=cls._create_console_config(logging_config.get("console", {})),
+            pattern_levels=cls._create_pattern_config(logging_config.get("patterns", {}))
         )
 
     @staticmethod
@@ -254,6 +256,26 @@ class LogConfig:
             rich_tracebacks=bool(console_config.get("rich_tracebacks", True))
         )
 
+    @staticmethod
+    def _create_pattern_config(pattern_config: dict) -> PatternLevelConfig:
+        """Create a PatternLevelConfig from the configuration dictionary.
+
+        Args:
+            pattern_config: Dictionary containing pattern-level mappings
+
+        Returns:
+            Configured PatternLevelConfig instance
+        """
+        if not pattern_config:
+            return PatternLevelConfig()
+
+        config = PatternLevelConfig()
+        # Process patterns in order they appear in the TOML
+        for pattern, level in pattern_config.items():
+            config = config.with_pattern(pattern, level.upper())
+
+        return config
+
     @classmethod
     def create_default(cls, log_dir: Path) -> "LogConfig":
         """Create a default LogConfig instance.
@@ -280,5 +302,6 @@ class LogConfig:
             console=ConsoleHandlerConfig(
                 colors=True,
                 rich_tracebacks=True
-            )
+            ),
+            pattern_levels=PatternLevelConfig()
         )

@@ -7,6 +7,7 @@ This package provides a clean, type-safe interface for setting up logging with b
 
 - 🎨 Colored console output with rich tracebacks (enabled by default)
 - 🔄 Optional rotating file output with configurable size and backup count
+- 🎯 Pattern-based log levels for fine-grained logger control
 - ⚙️ TOML-based configuration with sensible defaults
 - 🔍 Structured logging with JSON formatting for file output
 - 🛡️ Thread-safe configuration with single-configuration enforcement
@@ -65,6 +66,40 @@ configure_logging().with_file("logs/custom.log").build()
 logger = get_logger(__name__)
 logger.info("Logging to custom file path")
 ```
+
+## Pattern-Based Log Levels
+
+Control logging levels for specific loggers using glob-style patterns:
+
+```python
+from structlog_config import configure_logging, get_logger
+
+# Configure specific logging levels for different loggers
+(
+    configure_logging()
+    .with_pattern_level("sqlalchemy.*", "WARNING")
+    .with_pattern_level("app.auth.*", "DEBUG")
+    .build()
+)
+
+logger = get_logger(__name__)
+logger.info("Logging configured with pattern-based levels")
+```
+
+Pattern-based levels can also be configured in TOML:
+
+```toml
+[logging]
+level = "INFO"  # Default level
+
+[logging.patterns]
+"sqlalchemy.*" = "WARNING"      # Set all SQLAlchemy loggers to WARNING
+"sqlalchemy.engine.*" = "INFO"  # Override engine loggers to INFO
+"app.auth.*" = "DEBUG"         # Detailed logs for auth module
+```
+
+Patterns are matched in order, with later patterns taking precedence.
+When using both TOML and builder configuration, TOML patterns take precedence over builder patterns.
 
 ## Structured Logging
 

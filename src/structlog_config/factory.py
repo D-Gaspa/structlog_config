@@ -112,9 +112,8 @@ class LoggingBuilder:
     optional file logging with custom paths.
 
     Attributes:
-        _base_config:            Base logging configuration from TOML or defaults
-        _file_path:         Optional custom path for file logging output
-        _pattern_levels:    Pattern-based logging level configuration
+        _base_config:   Base logging configuration from TOML or defaults
+        _file_path:     Optional custom path for file logging output
     """
 
     def __init__(self, config: LogConfig) -> None:
@@ -123,9 +122,8 @@ class LoggingBuilder:
         Args:
             config: Base logging configuration
         """
-        self._base_config: Final = config
+        self._base_config: LogConfig = config
         self._file_path: Path | None = None
-        self._pattern_levels: PatternLevelConfig | None = None
 
     def with_file(self, path: str | Path | None = None) -> "LoggingBuilder":
         """Add file logging with an optional custom path.
@@ -159,7 +157,12 @@ class LoggingBuilder:
         Returns:
             Self for method chaining
         """
-        self._pattern_levels = self._pattern_levels.with_pattern(pattern, level)
+        # TOML patterns take precedence over builder patterns
+        if self._base_config.pattern_levels.patterns:
+            return self
+
+        new_patterns = self._base_config.pattern_levels.with_pattern(pattern, level)
+        self._base_config = replace(self._base_config, pattern_levels=new_patterns)
         return self
 
     def build(self) -> None:
@@ -171,7 +174,6 @@ class LoggingBuilder:
         config = RuntimeConfig(
             base_config=self._base_config,
             file_path=self._file_path,
-            pattern_levels=self._pattern_levels,
             is_configured=True
         )
 

@@ -9,6 +9,7 @@ Key Features:
     - Console-only fallback when logging is accessed before configuration
     - Optional rotating file output with configurable size and backup count
     - Colored console output with rich tracebacks (enabled by default)
+    - Pattern-based logging level control for specific loggers
     - TOML-based configuration with sensible defaults
     - Structured logging with JSON formatting for file output
     - Exception information with full tracebacks
@@ -27,6 +28,11 @@ Basic Usage:
     logger = get_logger(__name__)
     logger.info("Logging configured with file output")
 
+    # With pattern-based logging levels
+    configure_logging().with_pattern_level("sqlalchemy.*", "WARNING").build()
+    logger = get_logger("sqlalchemy.engine")
+    logger.info("This message will not be logged")
+
     # Custom file path (it creates directory if needed)
     configure_logging().with_file("logs/custom.log").build()
     logger = get_logger(__name__)
@@ -39,6 +45,10 @@ Configuration:
     ```toml
     [logging]
     level = "INFO"  # (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+
+    [logging.patterns]
+    "sqlalchemy.*" = "WARNING"     # Set all SQLAlchemy loggers to WARNING
+    "sqlalchemy.engine.*" = "INFO" # Override engine loggers to INFO
 
     [logging.file]
     path = "logs/app.log"
@@ -86,9 +96,11 @@ Implementation Notes:
     - File logging requires write permissions for the target directory
     - Configuration is thread-safe and can only be fully configured once
     - Early logging access before configuration uses console-only output
+    - Pattern-based levels follow glob-style matching (e.g., "app.*")
+    - TOML pattern configurations take precedence over builder methods
 """
 
 from .config import LogConfig
 from .factory import configure_logging, get_logger
 
-__all__ = ["configure_logging", "get_logger", "LogConfig"]
+__all__ = ["LogConfig", "configure_logging", "get_logger"]
