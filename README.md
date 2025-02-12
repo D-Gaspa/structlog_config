@@ -99,7 +99,7 @@ level = "INFO"  # Default level
 ```
 
 Patterns are matched in order, with later patterns taking precedence.
-When using both TOML and builder configuration, TOML patterns take precedence over builder patterns.
+When using both TOML and builder configuration, both are taken into account with the builder taking precedence.
 
 ## Structured Logging
 

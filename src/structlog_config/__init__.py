@@ -97,7 +97,7 @@ Implementation Notes:
     - Configuration is thread-safe and can only be fully configured once
     - Early logging access before configuration uses console-only output
     - Pattern-based levels follow glob-style matching (e.g., "app.*")
-    - TOML pattern configurations take precedence over builder methods
+    - TOML and builder patterns used at the same time work, the builder takes precedence
 """
 
 from .config import LogConfig

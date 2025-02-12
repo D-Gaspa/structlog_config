@@ -31,13 +31,11 @@ class RuntimeConfig:
     Attributes:
         base_config:    Base logging configuration from TOML or defaults
         file_path:      Optional custom path for file logging
-        pattern_levels: Pattern-based logging level configuration
         is_configured:  Flag indicating if logging has been fully configured
     """
 
     base_config: LogConfig
     file_path: Path | None = None
-    pattern_levels: PatternLevelConfig | None = None
     is_configured: bool = False
 
 
@@ -157,10 +155,6 @@ class LoggingBuilder:
         Returns:
             Self for method chaining
         """
-        # TOML patterns take precedence over builder patterns
-        if self._base_config.pattern_levels.patterns:
-            return self
-
         new_patterns = self._base_config.pattern_levels.with_pattern(pattern, level)
         self._base_config = replace(self._base_config, pattern_levels=new_patterns)
         return self
@@ -270,7 +264,7 @@ def _configure_logging(config: RuntimeConfig) -> None:
     _configure_logging_system(
         level=config.base_config.level,
         handlers=handlers,
-        pattern_levels=config.pattern_levels
+        pattern_levels=config.base_config.pattern_levels
     )
 
 

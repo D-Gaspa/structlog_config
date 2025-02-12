@@ -46,12 +46,19 @@ class PatternLevel:
     def matches(self, logger_name: str) -> bool:
         """Check if a logger name matches this pattern.
 
+        Special case:
+            if a pattern ends with '.**', it matches both the base name and all its children.
+            For example, 'sqlalchemy.**' matches both 'sqlalchemy' and 'sqlalchemy.engine'.
+
         Args:
             logger_name: Name of the logger to check
 
         Returns:
             True if the logger name matches the pattern, False otherwise
         """
+        if self.pattern.endswith(".**"):
+            base = self.pattern[:-3]  # remove '.**'
+            return logger_name == base or logger_name.startswith(base + ".")
         return fnmatch.fnmatch(logger_name, self.pattern)
 
 
