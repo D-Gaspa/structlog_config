@@ -7,7 +7,7 @@ allowing fine-grained control over logger levels using glob-style patterns.
 import fnmatch
 from dataclasses import dataclass
 
-from .config import VALID_LOG_LEVELS, LogLevel
+from .log_levels import VALID_LOG_LEVELS, LogLevel
 
 
 @dataclass(frozen=True, slots=True)
