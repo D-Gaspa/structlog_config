@@ -16,25 +16,28 @@ from typing import Final
 import structlog
 from structlog.stdlib import BoundLogger
 
-from .config import FileHandlerConfig, LogConfig
+from .config import FileHandlerConfig, LogConfig, LogLevel
 from .handlers import create_console_handler, create_file_handler, create_shared_processors
+from .pattern_config import PatternLevelConfig
 
 
 @dataclass(frozen=True)
-class LoggingConfig:
+class RuntimeConfig:
     """Internal configuration state holder.
 
     This class maintains the complete logging configuration state including both
     the base configuration and file-specific settings.
 
     Attributes:
-        config:         Base logging configuration from TOML or defaults
+        base_config:    Base logging configuration from TOML or defaults
         file_path:      Optional custom path for file logging
+        pattern_levels: Pattern-based logging level configuration
         is_configured:  Flag indicating if logging has been fully configured
     """
 
-    config: LogConfig
+    base_config: LogConfig
     file_path: Path | None = None
+    pattern_levels: PatternLevelConfig | None = None
     is_configured: bool = False
 
 
@@ -51,7 +54,7 @@ class ConfigurationState:
 
     def __init__(self) -> None:
         """Initialize the configuration state."""
-        self._state: LoggingConfig | None = None
+        self._state: RuntimeConfig | None = None
         self._lock: Final = threading.Lock()
 
     def is_configured(self) -> bool:
@@ -62,7 +65,7 @@ class ConfigurationState:
         """
         return self._state is not None and self._state.is_configured
 
-    def get_config(self) -> LoggingConfig:
+    def get_config(self) -> RuntimeConfig:
         """Get the current configuration state.
 
         Returns:
@@ -79,7 +82,7 @@ class ConfigurationState:
             raise RuntimeError(msg)
         return self._state
 
-    def set_config(self, config: LoggingConfig) -> None:
+    def set_config(self, config: RuntimeConfig) -> None:
         """Set the configuration state.
 
         Args:
@@ -109,8 +112,9 @@ class LoggingBuilder:
     optional file logging with custom paths.
 
     Attributes:
-        _config:    Base logging configuration from TOML or defaults
-        _file_path: Optional custom path for file logging output
+        _base_config:            Base logging configuration from TOML or defaults
+        _file_path:         Optional custom path for file logging output
+        _pattern_levels:    Pattern-based logging level configuration
     """
 
     def __init__(self, config: LogConfig) -> None:
@@ -119,8 +123,9 @@ class LoggingBuilder:
         Args:
             config: Base logging configuration
         """
-        self._config: Final = config
+        self._base_config: Final = config
         self._file_path: Path | None = None
+        self._pattern_levels: PatternLevelConfig | None = None
 
     def with_file(self, path: str | Path | None = None) -> "LoggingBuilder":
         """Add file logging with an optional custom path.
@@ -140,15 +145,33 @@ class LoggingBuilder:
 
         return self
 
+    def with_pattern_level(self, pattern: str, level: LogLevel) -> "LoggingBuilder":
+        """Add a pattern-based logging level configuration.
+
+        Patterns are glob-style (e.g., "sqlalchemy.*") and are matched against
+        logger names to determine the appropriate logging level.
+        Patterns are checked in the order they are added, with later patterns taking precedence.
+
+        Args:
+            pattern:    Glob-style pattern to match logger names
+            level:      Logging level to apply to matching loggers
+
+        Returns:
+            Self for method chaining
+        """
+        self._pattern_levels = self._pattern_levels.with_pattern(pattern, level)
+        return self
+
     def build(self) -> None:
         """Build and apply the logging configuration.
 
         This method finalizes the configuration and sets up the logging system.
         It can only be called once per application lifecycle.
         """
-        config = LoggingConfig(
-            config=self._config,
+        config = RuntimeConfig(
+            base_config=self._base_config,
             file_path=self._file_path,
+            pattern_levels=self._pattern_levels,
             is_configured=True
         )
 
@@ -217,7 +240,7 @@ def _configure_console_only() -> None:
     )
 
 
-def _configure_logging(config: LoggingConfig) -> None:
+def _configure_logging(config: RuntimeConfig) -> None:
     """Configure the logging system with the specified configuration.
 
     Sets up both structlog and standard library logging with the provided
@@ -227,7 +250,7 @@ def _configure_logging(config: LoggingConfig) -> None:
         config: Complete logging configuration to apply
     """
     shared_processors = create_shared_processors()
-    handlers = [create_console_handler(config.config.console, shared_processors)]
+    handlers = [create_console_handler(config.base_config.console, shared_processors)]
 
     if config.file_path is not None:
         file_config = _create_file_config(config)
@@ -243,12 +266,13 @@ def _configure_logging(config: LoggingConfig) -> None:
     )
 
     _configure_logging_system(
-        level=config.config.level,
-        handlers=handlers
+        level=config.base_config.level,
+        handlers=handlers,
+        pattern_levels=config.pattern_levels
     )
 
 
-def _create_file_config(config: LoggingConfig) -> FileHandlerConfig:
+def _create_file_config(config: RuntimeConfig) -> FileHandlerConfig:
     """Create the file handler configuration.
 
     Determines the appropriate file path based on the configuration and
@@ -260,7 +284,7 @@ def _create_file_config(config: LoggingConfig) -> FileHandlerConfig:
     Returns:
         File handler configuration with the resolved path and enabled state
     """
-    file_config = config.config.file
+    file_config = config.base_config.file
     # Check if the custom file path is not empty
     if config.file_path:
         return replace(file_config, path=config.file_path, enabled=True)
@@ -268,15 +292,20 @@ def _create_file_config(config: LoggingConfig) -> FileHandlerConfig:
     return file_config
 
 
-def _configure_logging_system(level: str, handlers: list[logging.Handler]) -> None:
-    """Configure the logging system with the specified handlers.
+def _configure_logging_system(
+        level: str,
+        handlers: list[logging.Handler],
+        pattern_levels: PatternLevelConfig | None = None
+) -> None:
+    """Configure the logging system with the specified handlers and patterns.
 
     Sets up both the root logger and any existing loggers with the provided configuration.
     This ensures consistent handling across all loggers.
 
     Args:
-        level:      Logging level to set
-        handlers:   List of handlers to add to loggers
+        level:          Default logging level to set
+        handlers:       List of handlers to add to loggers
+        pattern_levels: Optional pattern-based logging level configuration
     """
     # Configure root logger
     root_logger = logging.getLogger()
@@ -289,8 +318,18 @@ def _configure_logging_system(level: str, handlers: list[logging.Handler]) -> No
     for logger_name, logger in logging.Logger.manager.loggerDict.items():
         if not isinstance(logger, logging.Logger) or logger_name == "root":
             continue
+
         logger.handlers.clear()
         for handler in handlers:
             logger.addHandler(handler)
         logger.propagate = False
+
+        # Set logger level based on patterns if available
+        if pattern_levels is not None:
+            pattern_level = pattern_levels.get_level_for_logger(logger_name)
+            if pattern_level is not None:
+                logger.setLevel(pattern_level)
+                continue
+
+        # Use default level if no patterns match or patterns not configured
         logger.setLevel(level)
