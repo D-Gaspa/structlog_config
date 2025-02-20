@@ -5,10 +5,12 @@ with structured logging support. It handles both file and console outputs with t
 respective formatting and configuration options.
 """
 
+import json
 import logging
 import logging.handlers
 import os
 import sys
+from typing import Any
 
 import structlog
 from structlog.types import Processor
@@ -69,7 +71,7 @@ def create_file_handler(
 
     Args:
         config:             File handler configuration settings
-        shared_processors:  List of shared structlog processors to use
+        shared_processors:  List of shared structlog processors
 
     Returns:
         Configured RotatingFileHandler instance
@@ -93,6 +95,11 @@ def create_file_handler(
         if path.parent.exists() and not os.access(path.parent, os.W_OK):
             msg = f"Log directory is not writable: {path.parent}"
             raise ValueError(msg)
+
+        # Add newline to separate executions
+        if path.exists() and path.stat().st_size > 0:
+            with open(path, 'a', encoding=config.encoding) as f:
+                f.write('\n')
 
     except OSError as e:
         msg = f"Failed to setup log file at {path}: {e}"
@@ -154,6 +161,34 @@ def _create_file_formatter(
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             structlog.processors.dict_tracebacks,
-            structlog.processors.JSONRenderer(indent=None),
+            structlog.processors.JSONRenderer(serializer=ordered_json_dumps),
         ],
     )
+
+
+def ordered_json_dumps(dic: dict, **kwargs: dict[str, Any]) -> str:
+    """Create an ordered JSON dump with event first and timestamp last.
+
+    Args:
+        dic:        Dictionary to serialize
+        **kwargs:   Additional arguments passed to json.dumps
+
+    Returns:
+        JSON string with enforced field ordering
+    """
+    ordered = {}
+
+    # Ensure event is first if present
+    if "event" in dic:
+        ordered["event"] = dic["event"]
+
+    ordered.update({
+        key: value for key, value in dic.items()
+        if key not in {"event", "timestamp"}
+    })
+
+    # Add timestamp last if present
+    if "timestamp" in dic:
+        ordered["timestamp"] = dic["timestamp"]
+
+    return json.dumps(ordered, **kwargs)
