@@ -31,12 +31,32 @@ class RuntimeConfig:
     Attributes:
         base_config:    Base logging configuration from TOML or defaults
         file_path:      Optional custom path for file logging
-        is_configured:  Flag indicating if logging has been fully configured
     """
 
     base_config: LogConfig
     file_path: Path | None = None
-    is_configured: bool = False
+
+    @property
+    def file_config(self) -> FileHandlerConfig | None:
+        """Get the effective file configuration.
+
+        Returns:
+            FileHandlerConfig if file logging is enabled, None otherwise
+        """
+        if not self.base_config.file and not self.file_path:
+            return None
+
+        if not self.file_path:
+            return self.base_config.file
+
+        if not self.base_config.file:
+            return FileHandlerConfig(
+                path=self.file_path,
+                max_size=10 * 1024 * 1024,  # 10MB
+                backup_count=5
+            )
+
+        return replace(self.base_config.file, path=self.file_path)
 
 
 class ConfigurationState:
@@ -61,7 +81,7 @@ class ConfigurationState:
         Returns:
             True if logging has been configured, False otherwise
         """
-        return self._state is not None and self._state.is_configured
+        return self._state is not None
 
     def get_config(self) -> RuntimeConfig:
         """Get the current configuration state.
@@ -72,7 +92,7 @@ class ConfigurationState:
         Raises:
             RuntimeError: If logging hasn't been configured yet
         """
-        if self._state is None:
+        if not self.is_configured():
             msg = (
                 "Logging hasn't been configured. "
                 "Call configure_logging() first or use default console-only logging."
@@ -103,35 +123,34 @@ class ConfigurationState:
 _config_state: Final = ConfigurationState()
 
 
+@dataclass
 class LoggingBuilder:
     """Builder for logging configuration.
 
     Provides a fluent interface for configuring logging settings, including
-    optional file logging with custom paths.
+    optional file logging with custom paths and pattern-based logging levels.
+    The builder ensures a clean configuration process and maintains
+    immutability of the underlying configuration objects.
 
     Attributes:
         _base_config:   Base logging configuration from TOML or defaults
         _file_path:     Optional custom path for file logging output
     """
 
-    def __init__(self, config: LogConfig) -> None:
-        """Initialize the logging builder.
-
-        Args:
-            config: Base logging configuration
-        """
-        self._base_config: LogConfig = config
-        self._file_path: Path | None = None
+    _base_config: LogConfig
+    _file_path: Path | None = None
 
     def with_file(self, path: str | Path | None = None) -> "LoggingBuilder":
         """Add file logging with an optional custom path.
 
         If a path is provided, it can be either relative or absolute.
         Relative paths are resolved from the current working directory.
-        If no path is provided, the path from the configuration file or default path is used.
+        If no path is provided but file configuration exists in the base
+        config, that configuration will be used.
 
         Args:
-            path: Optional custom log file path
+            path: Optional custom log file path.
+                    If provided, it overrides any path from the configuration file.
 
         Returns:
             Self for method chaining
@@ -146,7 +165,8 @@ class LoggingBuilder:
 
         Patterns are glob-style (e.g., "sqlalchemy.*") and are matched against
         logger names to determine the appropriate logging level.
-        Patterns are checked in the order they are added, with later patterns taking precedence.
+        Patterns are checked in the order they are added, with later patterns
+        taking precedence.
 
         Args:
             pattern:    Glob-style pattern to match logger names
@@ -155,22 +175,26 @@ class LoggingBuilder:
         Returns:
             Self for method chaining
         """
-        new_patterns = self._base_config.pattern_levels.with_pattern(pattern, level)
-        self._base_config = replace(self._base_config, pattern_levels=new_patterns)
+        patterns = self._base_config.pattern_levels.with_pattern(pattern, level)
+        self._base_config = replace(self._base_config, pattern_levels=patterns)
         return self
 
     def build(self) -> None:
         """Build and apply the logging configuration.
 
         This method finalizes the configuration and sets up the logging system.
-        It can only be called once per application lifecycle.
+        It can only be called once per application lifecycle due to the global
+        nature of the logging configuration.
+
+        The build process:
+        1. Creates a runtime configuration combining base config and custom settings
+        2. Validates and applies the configuration globally
+        3. Sets up both structlog and standard library logging systems
         """
         config = RuntimeConfig(
             base_config=self._base_config,
             file_path=self._file_path,
-            is_configured=True
         )
-
         _config_state.set_config(config)
         _configure_logging(config)
 
@@ -188,10 +212,11 @@ def configure_logging(config_path: str | Path | None = None) -> LoggingBuilder:
     Returns:
         LoggingBuilder instance for method chaining
     """
-    if config_path is not None:
-        config = LogConfig.from_toml(Path(config_path))
-    else:
-        config = LogConfig.create_default(Path.cwd() / "logs")
+    config = (
+        LogConfig.from_toml(Path(config_path))
+        if config_path is not None
+        else LogConfig.create_default()
+    )
 
     return LoggingBuilder(config)
 
@@ -200,7 +225,7 @@ def get_logger(name: str | None = None) -> BoundLogger:
     """Get a configured structlog logger instance.
 
     Creates or retrieves a structured logger with the specified name.
-    If logging hasn't been configured yet, returns a console-only logger and issues a warning.
+    If logging hasn't been configured yet, returns a console-only logger.
 
     Args:
         name: Optional logger name (typically __name__)
@@ -209,14 +234,7 @@ def get_logger(name: str | None = None) -> BoundLogger:
         Configured BoundLogger instance
     """
     if not _config_state.is_configured():
-        # Set up basic console-only logging if not configured
         _configure_console_only()
-        logger = structlog.get_logger(name)
-        logger.warning(
-            "Using console-only logging as configure_logging() hasn't been called"
-        )
-        return logger
-
     return structlog.get_logger(name)
 
 
@@ -226,7 +244,7 @@ def _configure_console_only() -> None:
     Sets up a minimal logging configuration that only outputs to the console.
     This is used as a fallback when logging is accessed before configuration.
     """
-    config = LogConfig.create_default(Path.cwd() / "logs")
+    config = LogConfig.create_default()
     shared_processors = create_shared_processors()
     console_handler = create_console_handler(config.console, shared_processors)
 
@@ -248,8 +266,7 @@ def _configure_logging(config: RuntimeConfig) -> None:
     shared_processors = create_shared_processors()
     handlers = [create_console_handler(config.base_config.console, shared_processors)]
 
-    if config.file_path is not None:
-        file_config = _create_file_config(config)
+    if file_config := config.file_config:
         handlers.append(create_file_handler(file_config, shared_processors))
 
     structlog.configure(
@@ -268,26 +285,6 @@ def _configure_logging(config: RuntimeConfig) -> None:
     )
 
 
-def _create_file_config(config: RuntimeConfig) -> FileHandlerConfig:
-    """Create the file handler configuration.
-
-    Determines the appropriate file path based on the configuration and
-    builder settings.
-
-    Args:
-        config: Complete logging configuration
-
-    Returns:
-        File handler configuration with the resolved path and enabled state
-    """
-    file_config = config.base_config.file
-    # Check if the custom file path is not empty
-    if config.file_path:
-        return replace(file_config, path=config.file_path, enabled=True)
-
-    return file_config
-
-
 def _configure_logging_system(
         level: str,
         handlers: list[logging.Handler],
@@ -295,37 +292,92 @@ def _configure_logging_system(
 ) -> None:
     """Configure the logging system with the specified handlers and patterns.
 
-    Sets up both the root logger and any existing loggers with the provided configuration.
-    This ensures consistent handling across all loggers.
+    Sets up both the root logger and any existing loggers with the provided
+    configuration.
+    This ensures consistent handling across all loggers while respecting
+    pattern-based level configurations.
 
     Args:
         level:          Default logging level to set
         handlers:       List of handlers to add to loggers
         pattern_levels: Optional pattern-based logging level configuration
     """
-    # Configure root logger
+    _configure_root_logger(level, handlers)
+    _configure_existing_loggers(level, handlers, pattern_levels)
+
+
+def _configure_root_logger(level: str, handlers: list[logging.Handler]) -> None:
+    """Configure the root logger with the specified settings.
+
+    The root logger is the base logger that all other loggers inherit from by default.
+    This function ensures it has the correct level and handlers set.
+
+    Args:
+        level:      Logging level to set for the root logger
+        handlers:   List of handlers to attach to the root logger
+    """
     root_logger = logging.getLogger()
-    root_logger.handlers.clear()
+    root_logger.handlers.clear()  # We only want our handlers
+
     for handler in handlers:
         root_logger.addHandler(handler)
+
     root_logger.setLevel(level)
 
-    # Configure existing loggers
+
+def _configure_existing_loggers(
+        level: str,
+        handlers: list[logging.Handler],
+        pattern_levels: PatternLevelConfig | None = None
+) -> None:
+    """Configure all existing loggers in the logging system.
+
+    This function updates all non-root loggers that have been created,
+    ensuring they have the correct handlers and levels set according to
+    both the default configuration and any pattern-based rules.
+
+    Args:
+        level:          Default logging level to set
+        handlers:       List of handlers to add to each logger
+        pattern_levels: Optional pattern-based logging level configuration
+    """
     for logger_name, logger in logging.Logger.manager.loggerDict.items():
         if not isinstance(logger, logging.Logger) or logger_name == "root":
             continue
 
-        logger.handlers.clear()
-        for handler in handlers:
-            logger.addHandler(handler)
-        logger.propagate = False
+        _configure_logger(logger, level, handlers, pattern_levels)
 
-        # Set logger level based on patterns if available
-        if pattern_levels is not None:
-            pattern_level = pattern_levels.get_level_for_logger(logger_name)
-            if pattern_level is not None:
-                logger.setLevel(pattern_level)
-                continue
 
-        # Use default level if no patterns match or patterns not configured
-        logger.setLevel(level)
+def _configure_logger(
+        logger: logging.Logger,
+        level: str,
+        handlers: list[logging.Handler],
+        pattern_levels: PatternLevelConfig | None = None
+) -> None:
+    """Configure a single logger with the specified settings.
+
+    Sets up an individual logger with the appropriate handlers and level.
+    The level can be determined either by the default level or by matching
+    patterns if pattern-based configuration is provided.
+
+    Args:
+        logger:         Logger instance to configure
+        level:          Default logging level to set
+        handlers:       List of handlers to add to the logger
+        pattern_levels: Optional pattern-based logging level configuration
+    """
+    logger.handlers.clear()
+    for handler in handlers:
+        logger.addHandler(handler)
+    logger.propagate = False
+
+    # Apply pattern-based level if available and matching
+    if (
+            pattern_levels is not None
+            and (pattern_level := pattern_levels.get_level_for_logger(logger.name))
+    ):
+        logger.setLevel(pattern_level)
+        return
+
+    # Use default level if no patterns match or patterns not configured
+    logger.setLevel(level)

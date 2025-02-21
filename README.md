@@ -165,24 +165,17 @@ When file logging is enabled, logs are written in JSON format for easy parsing:
 
 ```json
 {
-  "timestamp": "2025-01-17 10:30:45",
-  "level": "info",
   "event": "User action completed",
-  "logger": "example_app",
   "user_id": "123",
   "service": "example_service",
   "action": "purchase",
   "item_id": "456",
-  "amount": 29.99
+  "amount": 29.99,
+  "logger": "example_app",
+  "level": "info",
+  "timestamp": "2025-01-17 10:30:45"
 }
 ```
-
-## Requirements
-
-- Python 3.10+
-- structlog>=24.4.0
-- rich>=13.9.4
-- colorama>=0.4.6
 
 ## Contributing
 

@@ -6,7 +6,7 @@ for both file and console logging outputs.
 """
 
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import tomllib
@@ -27,20 +27,19 @@ class FileHandlerConfig:
         max_size:       Maximum size of the log file in bytes before rotating
         backup_count:   Number of backup log files to keep before overwriting
         encoding:       Character encoding for the log file (default: utf-8)
-        enabled:        Enable file-based logging (default: False)
     """
 
     path: Path
     max_size: int
     backup_count: int
     encoding: str = "utf-8"
-    enabled: bool = field(default=False)
 
     def __post_init__(self) -> None:
         """Validate configuration values after initialization.
 
         Raises:
-            ValueError: If max_size is not positive or backup_count is negative
+            ValueError: If max_size is not positive, backup_count is negative,
+                       or if the path is invalid
         """
         if self.max_size <= 0:
             msg = "max_size must be a positive integer (bytes)"
@@ -50,25 +49,7 @@ class FileHandlerConfig:
             msg = "backup_count must be a non-negative integer"
             raise ValueError(msg)
 
-    def with_path(self, new_path: Path) -> "FileHandlerConfig":
-        """Create a new instance with an updated path.
-
-        Args:
-            new_path: New log file path
-
-        Returns:
-            New FileHandlerConfig instance with the updated path
-        """
-        self._validate_path(new_path)
-        return replace(self, path=new_path, enabled=True)
-
-    def enable(self) -> "FileHandlerConfig":
-        """Create a new instance with file logging enabled.
-
-        Returns:
-            New FileHandlerConfig instance with file logging enabled
-        """
-        return replace(self, enabled=True)
+        self._validate_path(self.path)
 
     @staticmethod
     def _validate_path(path: Path) -> None:
@@ -120,15 +101,15 @@ class LogConfig:
 
     Attributes:
         level:          Logging level to use (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        file:           FileHandlerConfig instance for file-based logging settings
         console:        ConsoleHandlerConfig instance for console-based logging settings
         pattern_levels: PatternLevelConfig for fine-grained logger level control
+        file:           Optional FileHandlerConfig instance for file-based logging settings
     """
 
     level: LogLevel
-    file: FileHandlerConfig
     console: ConsoleHandlerConfig
     pattern_levels: PatternLevelConfig
+    file: FileHandlerConfig | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration values after initialization.
@@ -207,11 +188,15 @@ class LogConfig:
         """
         logging_config = config_data["logging"]
 
+        file_config = None
+        if file_data := logging_config.get("file"):
+            file_config = cls._create_file_config(file_data)
+
         return cls(
             level=logging_config["level"].upper(),
-            file=cls._create_file_config(logging_config.get("file", {})),
             console=cls._create_console_config(logging_config.get("console", {})),
-            pattern_levels=cls._create_pattern_config(logging_config.get("patterns", {}))
+            pattern_levels=cls._create_pattern_config(logging_config.get("patterns", {})),
+            file=file_config
         )
 
     @staticmethod
@@ -224,21 +209,11 @@ class LogConfig:
         Returns:
             Configured FileHandlerConfig instance
         """
-        if not file_config:
-            # Return disabled file logging if no config provided
-            return FileHandlerConfig(
-                path=Path("logs/app.log"),
-                max_size=10 * 1024 * 1024,  # 10MB
-                backup_count=5,
-                enabled=False
-            )
-
         return FileHandlerConfig(
             path=Path(file_config["path"]),
             max_size=int(file_config["max_size"]),
             backup_count=int(file_config["backup_count"]),
             encoding=file_config.get("encoding", "utf-8"),
-            enabled=True
         )
 
     @staticmethod
@@ -277,28 +252,20 @@ class LogConfig:
         return config
 
     @classmethod
-    def create_default(cls, log_dir: Path) -> "LogConfig":
-        """Create a default LogConfig instance.
+    def create_default(cls) -> "LogConfig":
+        """Create a default LogConfig instance with sensible defaults.
 
-        Creates a configuration with sensible defaults:
+        Default settings:
         - INFO level logging
         - Console logging enabled with colors and rich tracebacks
-        - File logging disabled by default
-
-        Args:
-            log_dir: Directory where log files will be stored if enabled
+        - File logging disabled (None)
+        - No pattern-based level configuration
 
         Returns:
             LogConfig instance with default settings
         """
         return cls(
             level="INFO",
-            file=FileHandlerConfig(
-                path=log_dir / "app.log",
-                max_size=10 * 1024 * 1024,  # 10MB
-                backup_count=5,
-                enabled=False
-            ),
             console=ConsoleHandlerConfig(
                 colors=True,
                 rich_tracebacks=True
